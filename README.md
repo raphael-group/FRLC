@@ -11,6 +11,7 @@ This is the repository for the paper <a href = "https://openreview.net/pdf?id=hG
 
 If you have any questions about how to run this method, encounter bugs, or have any feedback on it, feel free to send an email to ph3641@princeton.edu or open a GitHub discussion. If this algorithm has been helpful for your work, or has been relevant to your paper, also feel free to cite this work with the Bibtex:
 
+```
 @inproceedings{
 halmos2024lowrank,
 title={Low-Rank Optimal Transport through Factor Relaxation with Latent Coupling},
@@ -19,3 +20,4 @@ booktitle={The Thirty-eighth Annual Conference on Neural Information Processing 
 year={2024},
 url={https://openreview.net/forum?id=hGgkdFF2hR}
 }
+```
