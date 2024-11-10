@@ -9,7 +9,7 @@ This is the repository for the paper <a href = "https://openreview.net/pdf?id=hG
   <li><tt>`util.py</tt> contains helper functions for <tt>`FRLC.py`</tt>, as well as <tt>`low_rank_distance_factorization`</tt> which can be used to compute an approximate factorization of the distance matrix, if it is too large to be computed or stored. </li>
 </ol>
 
-If you have any questions about how to run this method, encounter bugs, or have any feedback on it, feel free to send an email to ph3641@princeton.edu or open a GitHub discussion. If this algorithm has been helpful for your work, or has been relevant to your paper, also feel free to cite this work with the Bibtex:
+If you have any questions about how to run this method, encounter bugs, or have any feedback on it, feel free to send an email to ph3641@princeton.edu or open a GitHub discussion. If this algorithm has been helpful for your work, or has been relevant to your paper, also feel free to cite this work!
 
 ```
 @inproceedings{
