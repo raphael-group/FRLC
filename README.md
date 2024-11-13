@@ -21,4 +21,4 @@ year={2024},
 url={https://openreview.net/forum?id=hGgkdFF2hR}
 }
 ```
-Development of this repository is ongoing. The original files and experiments from the submission are also available on OpenReview.
+Development of this repository is ongoing. The original files and experiments from the submission are also available on OpenReview for reproducibility.
