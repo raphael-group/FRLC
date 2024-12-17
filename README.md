@@ -1,7 +1,5 @@
 # FRLC
 
-<img src="photos/fig1.png" alt="FRLC Schematic" width="400"/>
-
 This is the repository for the paper <a href = "https://openreview.net/pdf?id=hGgkdFF2hR" > "Low-rank optimal transport through factor relaxation with latent coupling" </a> which computes an LC-factorization as an interpretable means of decomposing a coupling matrix for general OT costs (W, GW, FGW) and relaxations (balanced, semi-relaxed, and unbalanced).
 
 <ol>
@@ -10,6 +8,8 @@ This is the repository for the paper <a href = "https://openreview.net/pdf?id=hG
   <li><tt>`objective_grad.py</tt> contain helper functions for the gradients of <tt>`FRLC.py`</tt></li>
   <li><tt>`util.py</tt> contains helper functions for <tt>`FRLC.py`</tt>, as well as <tt>`low_rank_distance_factorization`</tt> which can be used to compute an approximate factorization of the distance matrix, if it is too large to be computed or stored. </li>
 </ol>
+
+<img src="photos/fig1.png" alt="FRLC Schematic" width="400"/>
 
 If you have any questions about how to run this method, encounter bugs, or have any feedback on it, feel free to send an email to ph3641@princeton.edu or open a GitHub discussion. If this algorithm has been helpful for your work, or has been relevant to your paper, also feel free to cite this work!
 
