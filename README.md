@@ -1,6 +1,6 @@
 # FRLC
 
-<a href="photos/fig1.png" target="_blank">FRLC Schematic</a>
+<a href="photos/fig1.png" /a>
 
 This is the repository for the paper <a href = "https://openreview.net/pdf?id=hGgkdFF2hR" > "Low-rank optimal transport through factor relaxation with latent coupling" </a> which computes an LC-factorization as an interpretable means of decomposing a coupling matrix for general OT costs (W, GW, FGW) and relaxations (balanced, semi-relaxed, and unbalanced).
 
