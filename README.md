@@ -23,4 +23,4 @@ year={2024},
 url={https://openreview.net/forum?id=hGgkdFF2hR}
 }
 ```
-Development of this repository is ongoing. The original files and experiments from the submission are also available on OpenReview for reproducibility.
+Development of this repository and selection of defaults for important hyperparameters (e.g. the relaxation of the inner marginal $\tau_{in}$) is ongoing. The original files and experiments from the submission are also available on OpenReview for reproducibility.
