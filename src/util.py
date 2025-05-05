@@ -61,7 +61,7 @@ def initialize_couplings(a, b, gQ, gR, gamma, \
         u, v = Sinkhorn(xi_random, a, gQ, N1, r, gamma, device=device, max_iter=max_iter, dtype=dtype)
         Q = torch.diag(u) @ xi_random @ torch.diag(v)
         '''
-        Q = logSinkhorn(C_random, a, gQ, gamma, max_iter = max_iter, \
+        Q,_,_ = logSinkhorn(C_random, a, gQ, gamma, max_iter = max_iter, \
                          device=device, dtype=dtype, balanced=True, unbalanced=False)
         
         # 2. R-generation
@@ -70,7 +70,7 @@ def initialize_couplings(a, b, gQ, gR, gamma, \
         xi_random = torch.exp( -C_random )
         u, v = Sinkhorn(xi_random, b, gR, N2, r2, gamma, device=device, max_iter=max_iter, dtype=dtype)
         R = torch.diag(u) @ xi_random @ torch.diag(v)'''
-        R = logSinkhorn(C_random, b, gR, gamma, max_iter = max_iter, \
+        R,_,_ = logSinkhorn(C_random, b, gR, gamma, max_iter = max_iter, \
                          device=device, dtype=dtype, balanced=True, unbalanced=False)
         
         # 3. T-generation
@@ -81,7 +81,7 @@ def initialize_couplings(a, b, gQ, gR, gamma, \
         u, v = Sinkhorn(xi_random, gQ, gR, r, r2, gamma, device=device, max_iter=max_iter, dtype=dtype)
         T = torch.diag(u) @ xi_random @ torch.diag(v)
         '''
-        T = logSinkhorn(C_random, gQ, gR, gamma, max_iter = max_iter, \
+        T,_,_ = logSinkhorn(C_random, gQ, gR, gamma, max_iter = max_iter, \
                          device=device, dtype=dtype, balanced=True, unbalanced=False)
         
         # Use this to form the inner inverse coupling
@@ -299,16 +299,27 @@ def project_Unbalanced(xi1, a, g, N1, r, gamma_k, tau, max_iter = 50, \
     return u, v
 
 def logSinkhorn(grad, a, b, gamma_k, max_iter = 50, \
-             device='cpu', dtype=torch.float64, balanced=True, unbalanced=False, tau=None, tau2=None):
+             device='cpu', dtype=torch.float64, \
+                balanced=True, unbalanced=False, \
+                tau=None, tau2=None, \
+                recenter_every=30, tol=1e-12, \
+                squeeze=True,
+               dual_1 = None, dual_2 = None):
+    
+    a, b = (a / a.sum()), (b / b.sum())
     
     log_a = torch.log(a)
     log_b = torch.log(b)
-
-    n, m = a.size(0), b.size(0)
     
-    f_k = torch.zeros((n), device=device)
-    g_k = torch.zeros((m), device=device)
+    n, m = a.size(0), b.size(0)
 
+    if dual_1 is None and dual_2 is None:
+        f_k = torch.zeros((n), device=device)
+        g_k = torch.zeros((m), device=device)
+    else:
+        f_k = dual_1
+        g_k = dual_2
+    
     epsilon = gamma_k**-1
     
     if not balanced:
@@ -316,7 +327,11 @@ def logSinkhorn(grad, a, b, gamma_k, max_iter = 50, \
         if tau2 is not None:
             ubc2 = (tau2/(tau2 + epsilon ))
     
-    for i in range(max_iter):
+    for it in range(max_iter):
+        
+        f_prev = f_k.clone()
+        g_prev = g_k.clone()
+        
         if balanced and not unbalanced:
             # Balanced
             f_k = f_k + epsilon*(log_a - torch.logsumexp(Cost(f_k, g_k, grad, epsilon, device=device), axis=1))
@@ -329,10 +344,31 @@ def logSinkhorn(grad, a, b, gamma_k, max_iter = 50, \
             # Semi-relaxed
             f_k = (f_k + epsilon*(log_a - torch.logsumexp(Cost(f_k, g_k, grad, epsilon, device=device), axis=1)) )
             g_k = ubc*(g_k + epsilon*(log_b - torch.logsumexp(Cost(f_k, g_k, grad, epsilon, device=device), axis=0)) )
-
-    P = torch.exp(Cost(f_k, g_k, grad, epsilon, device=device))
+            '''
+            if squeeze and it == max_iter - 1:
+                f_k = (f_k + epsilon*(log_a - torch.logsumexp(Cost(f_k, g_k, grad, epsilon, device=device), axis=1)) )'''
+        
+        if it % recenter_every == 0:
+            # Recenter potentials; gauge invariant
+            alpha = f_k.mean()
+            f_k -= alpha
+            g_k += alpha
+        
+        if max((f_k-f_prev).abs().max(), (g_k-g_prev).abs().max()) < tol:
+            break
     
-    return P
+    # OR:
+    #logP = (-grad + f_k[:, None] + g_k[None, :]) / epsilon
+    # torch.exp(logP)
+    
+    P = torch.exp(Cost(f_k, g_k, grad, epsilon, device=device))
+
+    '''
+    if squeeze and (not balanced and not unbalanced):
+        # Last projection of semi-relaxed always satisfies outer marginal
+        P = torch.diag( a / P.sum(1) ) @ P'''
+    
+    return P, f_k, g_k
 
 def Sinkhorn(xi, a, b, N1, r, gamma_k, max_iter = 50, \
              delta = 1e-9, device='cpu', dtype=torch.float64):
