@@ -6,15 +6,38 @@ import matplotlib.pyplot as plt
 
 
 
-def FRLC_opt(C, a=None, b=None, A=None, B=None, tau_in = 50, tau_out=50, \
-             gamma=90, r = 10, r2=None, max_iter=200, device='cpu', dtype=torch.float64, \
-                  semiRelaxedLeft=False, semiRelaxedRight=False, Wasserstein=True, \
-                 printCost=True, returnFull=False, FGW=False, alpha=0.0, unbalanced=False, \
-                  initialization='Full', init_args = None, full_grad=True, \
-                   convergence_criterion=True, tol=1e-5, min_iter = 25, \
-                   min_iterGW = 500, max_iterGW = 1000, \
-                   max_inneriters_balanced= 300, max_inneriters_relaxed=50, \
-                  diagonalize_return=False):
+def FRLC_opt(C,
+             a=None,
+             b=None,
+             A=None,
+             B=None,
+             tau_in = 50,
+             tau_out=50,
+             gamma=90, 
+             r = 10, 
+             r2=None, 
+             max_iter=200, 
+             device='cpu', 
+             dtype=torch.float64, 
+             semiRelaxedLeft=False, 
+             semiRelaxedRight=False, 
+             Wasserstein=True, 
+             printCost=True, 
+             returnFull=False, 
+             FGW=False, 
+             alpha=0.0, 
+             unbalanced=False, 
+             initialization='Full',
+             init_args = None,
+             full_grad=True,
+             convergence_criterion=True,
+             tol=1e-5,
+             min_iter = 25,
+             min_iterGW = 500,
+             max_iterGW = 1000,
+             max_inneriters_balanced= 300,
+             max_inneriters_relaxed=50,
+             diagonalize_return=False):
     
     '''
     FRLC: Factor Relaxation with Latent Coupling
@@ -286,13 +309,32 @@ Optimization of FRLC supposing the distance matrices C, A, B have been factorize
 ----------
 '''
 
-def FRLC_LR_opt(C_factors, A_factors, B_factors, a=None, b=None, tau_in = 50, tau_out=50, \
-                  gamma=90, r = 10, r2=None, max_iter=200, device='cpu', dtype=torch.float64, \
-                 printCost=True, returnFull=False, alpha=0.0, \
-                  initialization='Full', init_args = None, full_grad=True, \
-                   convergence_criterion=True, tol=5e-6, min_iter = 25, \
-                   max_inneriters_balanced= 300, max_inneriters_relaxed=50, \
-                  diagonalize_return=False):
+def FRLC_LR_opt(C_factors, 
+                A_factors, 
+                B_factors, 
+                a=None, 
+                b=None, 
+                tau_in = 50, 
+                tau_out=50, 
+                gamma=90, 
+                r = 10, 
+                r2=None, 
+                max_iter=200, 
+                device='cpu', 
+                dtype=torch.float64,
+                printCost=True, 
+                returnFull=False, 
+                alpha=0.0, 
+                initialization='Full', 
+                init_args = None, 
+                full_grad=True, 
+                convergence_criterion=True, 
+                tol=5e-6, 
+                min_iter = 25, 
+                max_inneriters_balanced= 300, 
+                max_inneriters_relaxed=50, 
+                diagonalize_return=False):
+    
     '''
     FRLC with a low-rank factorization of the distance matrices (C, A, B) assumed.
     
@@ -418,6 +460,11 @@ def FRLC_LR_opt(C_factors, A_factors, B_factors, a=None, b=None, tau_in = 50, ta
     grad = torch.inf
     gamma_k = gamma
     Q_prev, R_prev, T_prev = None, None, None
+
+    # Initialize duals for warm-start across iterations
+    dual_1Q, dual_2Q = None, None
+    dual_1R, dual_2R = None, None
+    dual_1T, dual_2T = None, None
     
     while (k < max_iter and (not convergence_criterion or \
                        (k < min_iter or util.Delta((Q, R, T), (Q_prev, R_prev, T_prev), gamma_k) > tol))):
@@ -432,19 +479,19 @@ def FRLC_LR_opt(C_factors, A_factors, B_factors, a=None, b=None, tau_in = 50, ta
         gradQ, gradR, gamma_k = gd.compute_grad_A_LR(C_factors, A_factors, B_factors, Q, R, Lambda, gamma, device, \
                                    alpha=alpha, dtype=dtype, full_grad=full_grad)
         ### Semi-relaxed updates ###
-        R = util.logSinkhorn(gradR - (gamma_k**-1)*torch.log(R), b, gR, gamma_k, max_iter = max_inneriters_relaxed, \
-                         device=device, dtype=dtype, balanced=False, unbalanced=False, tau=tau_in)
+        R, dual_1R, dual_2R = util.logSinkhorn(gradR - (gamma_k**-1)*torch.log(R), b, gR, gamma_k, max_iter = max_inneriters_relaxed, \
+                         device=device, dtype=dtype, balanced=False, unbalanced=False, tau=tau_in, dual_1 = dual_1R, dual_2 = dual_2R)
         
-        Q = util.logSinkhorn(gradQ - (gamma_k**-1)*torch.log(Q), a, gQ, gamma_k, max_iter = max_inneriters_relaxed, \
-                         device=device, dtype=dtype, balanced=False, unbalanced=False, tau=tau_in)
+        Q, dual_1Q, dual_2Q = util.logSinkhorn(gradQ - (gamma_k**-1)*torch.log(Q), a, gQ, gamma_k, max_iter = max_inneriters_relaxed, \
+                         device=device, dtype=dtype, balanced=False, unbalanced=False, tau=tau_in, dual_1 = dual_1Q, dual_2 = dual_2Q)
         
         gQ, gR = Q.T @ one_N1, R.T @ one_N2
         
         gradT, gamma_T = gd.compute_grad_B_LR(C_factors, A_factors, B_factors, Q, R, Lambda, gQ, gR, gamma, device, \
                                        alpha=alpha, dtype=dtype)
         
-        T = util.logSinkhorn(gradT - (gamma_T**-1)*torch.log(T), gQ, gR, gamma_T, max_iter = max_inneriters_balanced, \
-                         device=device, dtype=dtype, balanced=True, unbalanced=False)
+        T, dual_1T, dual_2T = util.logSinkhorn(gradT - (gamma_T**-1)*torch.log(T), gQ, gR, gamma_T, max_iter = max_inneriters_balanced, \
+                         device=device, dtype=dtype, balanced=True, unbalanced=False, dual_1 = dual_1T, dual_2 = dual_2T)
         
         # Inner latent transition-inverse matrix
         Lambda = torch.diag(1/gQ) @ T @ torch.diag(1/gR)
