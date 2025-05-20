@@ -436,6 +436,8 @@ def FRLC_LR_opt(C_factors,
                                                     gamma, full_rank=full_rank, \
                                                 device=device, dtype=dtype, \
                                                     max_iter = max_inneriters_balanced)
+        Q, R, T = stabilize_Q_init(Q, device=device, dtype=dtype), stabilize_Q_init(R, device=device, dtype=dtype), stabilize_Q_init(T, device=device, dtype=dtype)
+        Lambda = torch.diag(1/ (Q.T @ one_N1)) @ T @ torch.diag(1/ (R.T @ one_N2))
     else:
         # Initialize to given factors
         Q, R, T = init_args
@@ -448,6 +450,8 @@ def FRLC_LR_opt(C_factors,
                                                     gamma, full_rank=full_rank, \
                                                 device=device, dtype=dtype, \
                                                     max_iter = max_inneriters_balanced)
+            _Q, _R, _T = stabilize_Q_init(_Q, device=device, dtype=dtype), stabilize_Q_init(_R, device=device, dtype=dtype), stabilize_Q_init(_T, device=device, dtype=dtype)
+            Lambda = torch.diag(1/ (Q.T @ one_N1)) @ T @ torch.diag(1/ (R.T @ one_N2))
             if Q is None:
                 Q = _Q
             if R is None:
@@ -540,7 +544,7 @@ def FRLC_LR_opt(C_factors,
 
 
 def stabilize_Q_init(Q, rand_perturb = False, 
-                     lambda_factor = 0.95, max_inneriters_balanced= 300, 
+                     lambda_factor = 0.9, max_inneriters_balanced= 300, 
                      device='cpu', dtype=torch.float64):
     """
     Initial condition Q (e.g. from annotation, if doing a warm-start) will not optimize if one-hot.
