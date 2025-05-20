@@ -451,7 +451,6 @@ def FRLC_LR_opt(C_factors,
                                                 device=device, dtype=dtype, \
                                                     max_iter = max_inneriters_balanced)
             _Q, _R, _T = stabilize_Q_init(_Q, device=device, dtype=dtype), stabilize_Q_init(_R, device=device, dtype=dtype), stabilize_Q_init(_T, device=device, dtype=dtype)
-            Lambda = torch.diag(1/ (Q.T @ one_N1)) @ T @ torch.diag(1/ (R.T @ one_N2))
             if Q is None:
                 Q = _Q
             if R is None:
