@@ -4,6 +4,95 @@ import util
 import objective_grad as gd
 import matplotlib.pyplot as plt
 
+import torch
+import jax
+import jax.numpy as jnp
+import ott
+from ott.geometry.geometry import Geometry
+from ott.solvers.linear.sinkhorn import Sinkhorn
+from ott.problems.linear.linear_problem import LinearProblem
+from ott.solvers import linear
+
+
+class JaxSinkhorn:
+    
+    def __init__(self, max_iters: int, threshold: float = 1e-8, dtype=torch.float64):
+        self.max_iters = max_iters
+        self.threshold = threshold
+        self.dtype = dtype
+        # we’ll jit the _solve itself; tau and eps will be passed each call
+        self.solver = Sinkhorn(
+            threshold=threshold,
+            max_iterations=max_iters
+        )
+        self._solver = jax.jit(self._solve,
+                               static_argnames=('epsilon',
+                                                'tau_a',
+                                                'tau_b',
+                                    'max_iters','threshold'
+                              ))
+        
+    def _solve(self,
+           C: jnp.ndarray,
+           a: jnp.ndarray,
+           b: jnp.ndarray,
+           init: tuple,
+           epsilon: float,
+           tau_a: float,
+           tau_b: float,
+           max_iters: int,
+           threshold: float):
+        
+        geom = Geometry(cost_matrix=C, epsilon=epsilon)
+        
+        prob = LinearProblem(geom, a=a, b=b, tau_a=(tau_a if tau_a is not None else 1.0),
+                             tau_b=(tau_b if tau_b is not None else 1.0))
+        
+        if init[0] is None and init[1] is None:
+            out = self.solver(prob)
+        else:
+            out = self.solver(prob, init=init)
+        
+        return out.matrix, out.f, out.g
+
+    def __call__(self,
+         C_t: torch.Tensor,
+         a_t: torch.Tensor,
+         b_t: torch.Tensor,
+         init_state,
+         epsilon,    # this could be a torch.Tensor right now
+         tau_a,
+         tau_b):
+        
+        C_j = jax.dlpack.from_dlpack(torch.utils.dlpack.to_dlpack(C_t))
+        a_j = jax.dlpack.from_dlpack(torch.utils.dlpack.to_dlpack(a_t))
+        b_j = jax.dlpack.from_dlpack(torch.utils.dlpack.to_dlpack(b_t))
+
+        if init_state[0] is None and init_state[1] is None:
+            init_arg = (None, None)
+        else:
+            f_prev_t, g_prev_t = init_state
+            f_prev_j = jax.dlpack.from_dlpack(torch.utils.dlpack.to_dlpack(f_prev_t))
+            g_prev_j = jax.dlpack.from_dlpack(torch.utils.dlpack.to_dlpack(g_prev_t))
+            init_arg = (f_prev_j, g_prev_j)
+        
+        eps_f = float(epsilon) if isinstance(epsilon, torch.Tensor) else float(epsilon)
+        tau_a_f = 1.0 if tau_a is None else float(tau_a)
+        tau_b_f = 1.0 if tau_b is None else float(tau_b)
+        
+        P_j, f_j, g_j = self._solver(
+            C_j, a_j, b_j, init_arg,
+            eps_f,
+            tau_a_f,
+            tau_b_f,
+            self.max_iters,
+            self.threshold
+            )
+        
+        P_t = torch.utils.dlpack.from_dlpack(jax.dlpack.to_dlpack(P_j)).to(self.dtype)
+        f_t = torch.utils.dlpack.from_dlpack(jax.dlpack.to_dlpack(f_j)).to(self.dtype)
+        g_t = torch.utils.dlpack.from_dlpack(jax.dlpack.to_dlpack(g_j)).to(self.dtype)
+        return P_t, (f_t, g_t)
 
 
 def FRLC_opt(C,
@@ -153,10 +242,6 @@ def FRLC_opt(C,
                                                     gamma, full_rank=full_rank, \
                                                 device=device, dtype=dtype, \
                                                     max_iter = max_inneriters_balanced)
-        
-        Q, R, T = stabilize_Q_init(Q, device=device, dtype=dtype), stabilize_Q_init(R, device=device, dtype=dtype), stabilize_Q_init(T, device=device, dtype=dtype)
-        
-        Lambda = torch.diag(1/ (Q.T @ one_N1)) @ T @ torch.diag(1/ (R.T @ one_N2))
     else:
         Q, R, T = init_args
         Lambda = torch.diag(1/ (Q.T @ one_N1)) @ T @ torch.diag(1/ (R.T @ one_N2))
@@ -179,6 +264,10 @@ def FRLC_opt(C,
     dual_1R, dual_2R = None, None
     dual_1T, dual_2T = None, None
     
+    sinkQ = JaxSinkhorn(max_iters=max_inneriters_relaxed, threshold=1e-8, dtype=dtype)
+    sinkR = JaxSinkhorn(max_iters=max_inneriters_relaxed, threshold=1e-8, dtype=dtype)
+    sinkT = JaxSinkhorn(max_iters=max_inneriters_balanced, threshold=1e-8, dtype=dtype)
+    
     while (k < max_iter and (not convergence_criterion or \
                        (k < min_iter or util.Delta((Q, R, T), (Q_prev, R_prev, T_prev), gamma_k) > tol))):
         
@@ -193,71 +282,62 @@ def FRLC_opt(C,
                                                semiRelaxedRight, device, Wasserstein=Wasserstein, \
                                                A=A, B=B, FGW=FGW, alpha=alpha, \
                                                   unbalanced=unbalanced, full_grad=full_grad)
-        if semiRelaxedLeft:
-            
-            R, dual_1R, dual_2R = util.logSinkhorn(gradR - (gamma_k**-1)*torch.log(R), b, gR, gamma_k, max_iter = max_inneriters_relaxed, \
-                         device=device, dtype=dtype, balanced=False, unbalanced=False, tau=tau_in, dual_1 = dual_1R, dual_2 = dual_2R)
-            Q, dual_1Q, dual_2Q = util.logSinkhorn(gradQ - (gamma_k**-1)*torch.log(Q), a, gQ, gamma_k, max_iter = max_inneriters_relaxed, \
-                         device=device, dtype=dtype, balanced=False, unbalanced=True, tau=tau_out, tau2=tau_in, \
-                                 dual_1 = dual_1Q, dual_2 = dual_2Q)
-            
-            gQ, gR = Q.T @ one_N1, R.T @ one_N2
-            
-            gradT, gamma_T = gd.compute_grad_B(C, Q, R, Lambda, gQ, gR, \
-                                               gamma, device, Wasserstein=Wasserstein, \
-                                               A=A, B=B, FGW=FGW, alpha=alpha)
-            
-        elif semiRelaxedRight:
-            
-            Q, dual_1Q, dual_2Q = util.logSinkhorn(gradQ - (gamma_k**-1)*torch.log(Q), a, gQ, gamma_k, max_iter = max_inneriters_relaxed, \
-                         device=device, dtype=dtype, balanced=False, unbalanced=False, tau=tau_in, \
-                                 dual_1 = dual_1Q, dual_2 = dual_2Q)
-            R, dual_1R, dual_2R = util.logSinkhorn(gradR - (gamma_k**-1)*torch.log(R), b, gR, gamma_k, max_iter = max_inneriters_relaxed, \
-                         device=device, dtype=dtype, balanced=False, unbalanced=True, tau=tau_out, tau2=tau_in, \
-                                 dual_1 = dual_1R, dual_2 = dual_2R)
-            
-            gQ, gR = Q.T @ one_N1, R.T @ one_N2
-            
-            gradT, gamma_T = gd.compute_grad_B(C, Q, R, Lambda, gQ, gR, \
-                                               gamma, device, Wasserstein=Wasserstein, \
-                                               A=A, B=B, FGW=FGW, alpha=alpha)
-            
-        elif unbalanced:
-            
-            Q, dual_1Q, dual_2Q = util.logSinkhorn(gradQ - (gamma_k**-1)*torch.log(Q), a, gQ, gamma_k, max_iter = max_inneriters_relaxed, \
-                         device=device, dtype=dtype, balanced=False, unbalanced=True, tau=tau_out, tau2=tau_in, \
-                                dual_1 = dual_1Q, dual_2 = dual_2Q)
-            
-            R, dual_1R, dual_2R = util.logSinkhorn(gradR - (gamma_k**-1)*torch.log(R), b, gR, gamma_k, max_iter = max_inneriters_relaxed, \
-                         device=device, dtype=dtype, balanced=False, unbalanced=True, tau=tau_out, tau2=tau_in, \
-                                dual_1 = dual_1R, dual_2 = dual_2R)
-            
-            gQ, gR = Q.T @ one_N1, R.T @ one_N2
-            
-            gradT, gamma_T = gd.compute_grad_B(C, Q, R, Lambda, gQ, gR, gamma, \
-                                               device, Wasserstein=Wasserstein, \
-                                               A=A, B=B, FGW=FGW, alpha=alpha)
-            
-        else:
-            
-            # Balanced
-            Q, dual_1Q, dual_2Q = util.logSinkhorn(gradQ - (gamma_k**-1)*torch.log(Q), a, gQ, gamma_k, max_iter = max_inneriters_relaxed, \
-                         device=device, dtype=dtype, balanced=False, unbalanced=False, tau=tau_in, \
-                                dual_1 = dual_1Q, dual_2 = dual_2Q)
-            
-            R, dual_1R, dual_2R = util.logSinkhorn(gradR - (gamma_k**-1)*torch.log(R), b, gR, gamma_k, max_iter = max_inneriters_relaxed, \
-                         device=device, dtype=dtype, balanced=False, unbalanced=False, tau=tau_in, \
-                                dual_1 = dual_1R, dual_2 = dual_2R)
-            
-            gQ, gR = Q.T @ one_N1, R.T @ one_N2
-            
-            gradT, gamma_T = gd.compute_grad_B(C, Q, R, Lambda, gQ, gR, gamma, \
-                                               device, Wasserstein=Wasserstein, \
-                                               A=A, B=B, FGW=FGW, alpha=alpha)
+        eps = (gamma_k**-1)
         
-        T, dual_1T, dual_2T = util.logSinkhorn(gradT - (gamma_T**-1)*torch.log(T), gQ, gR, gamma_T, max_iter = max_inneriters_balanced, \
-                         device=device, dtype=dtype, balanced=True, unbalanced=False, \
-                                dual_1 = dual_1T, dual_2 = dual_2T)
+        # Handle marginal constraints by case
+        if semiRelaxedLeft:
+            tau_a_Q, tau_b_Q = tau_out/(tau_out + eps), tau_in/(tau_in + eps)
+        elif semiRelaxedRight:
+            tau_a_Q, tau_b_Q = None, tau_in/(tau_in + eps)
+        elif unbalanced:
+            tau_a_Q, tau_b_Q = tau_out/(tau_out + eps), tau_in/(tau_in + eps)
+        else:
+            tau_a_Q, tau_b_Q = None, tau_in/(tau_in + eps)
+        
+        Q, (dual_1Q, dual_2Q) = sinkQ(
+                        gradQ - eps * torch.log(Q),
+                        a,
+                        gQ,
+                        init_state=(dual_1Q, dual_2Q),
+                        epsilon=eps,
+                        tau_a=tau_a_Q,
+                        tau_b=tau_b_Q
+                    )
+        
+        gQ = Q.T @ one_N1
+        
+        if semiRelaxedLeft:
+            tau_a_R, tau_b_R = None, tau_in/(tau_in + eps)
+        elif semiRelaxedRight:
+            tau_a_R, tau_b_R = tau_out/(tau_out + eps), tau_in/(tau_in + eps)
+        elif unbalanced:
+            tau_a_R, tau_b_R = tau_out/(tau_out + eps), tau_in/(tau_in + eps)
+        else:
+            tau_a_R, tau_b_R = None, tau_in/(tau_in + eps)
+
+        R, (dual_1R, dual_2R) = sinkR(
+            gradR - eps * torch.log(R),
+            b,
+            gR,
+            init_state=(dual_1R, dual_2R),
+            epsilon=eps,
+            tau_a=tau_a_R,
+            tau_b=tau_b_R
+        )
+        gR = R.T @ one_N2
+        
+        gradT, gamma_T = gd.compute_grad_B(C, Q, R, Lambda, gQ, gR, \
+                                           gamma, device, Wasserstein=Wasserstein, \
+                                           A=A, B=B, FGW=FGW, alpha=alpha)
+        epsT = (gamma_T**-1)
+        T, (dual_1T, dual_2T) = sinkT(
+                                    gradT - epsT * torch.log(T),
+                                    gQ, gR,
+                                    init_state=(dual_1T, dual_2T),
+                                    epsilon=epsT,
+                                    tau_a=None,
+                                    tau_b=None
+                                )
         
         # Inner latent transition-inverse matrix
         Lambda = torch.diag(1/gQ) @ T @ torch.diag(1/gR)
@@ -337,12 +417,13 @@ def FRLC_LR_opt(C_factors,
                 min_iter = 25, 
                 max_inneriters_balanced= 300, 
                 max_inneriters_relaxed=50, 
-                diagonalize_return=False):
+                diagonalize_return=False,
+                semiRelaxedLeft=False,
+                semiRelaxedRight=False,
+                unbalanced=False):
     
     '''
     FRLC with a low-rank factorization of the distance matrices (C, A, B) assumed.
-    
-    *** Currently only implements balanced OT ***
     
     ------Parameters------
     C_factors: tuple of torch.tensor (n x d, d x m)
@@ -482,6 +563,7 @@ def FRLC_LR_opt(C_factors,
         
         gradQ, gradR, gamma_k = gd.compute_grad_A_LR(C_factors, A_factors, B_factors, Q, R, Lambda, gamma, device, \
                                    alpha=alpha, dtype=dtype, full_grad=full_grad)
+
         
         ### Semi-relaxed updates ###
         R, dual_1R, dual_2R = util.logSinkhorn(gradR - (gamma_k**-1)*torch.log(R), b, gR, gamma_k, max_iter = max_inneriters_relaxed, \
@@ -538,23 +620,4 @@ def FRLC_LR_opt(C_factors,
         return Q, R, T, errs
 
 
-
-def stabilize_Q_init(Q, rand_perturb = False, 
-                     lambda_factor = 0.95, max_inneriters_balanced= 300, 
-                     device='cpu', dtype=torch.float64):
-    """
-    Initial condition Q (e.g. from annotation, if doing a warm-start) will not optimize if one-hot.
-                ---e.g. if most of Q_t is sparse/a clustering, logQ_t = - inf which is unstable!
-    
-    Perturb to ensure there is non-zero mass everywhere.
-    """
-    # Add a small random or trivial outer product perturbation to ensure stability of one-hot encoded Q
-    N2, r2 = Q.shape[0], Q.shape[1]
-    b, gQ = torch.sum(Q, axis = 1), torch.sum(Q, axis = 0)
-    eps_Q = torch.outer(b, gQ).to(device).type(dtype)
-    
-    # Yield perturbation, return
-    Q_init = ( 1 - lambda_factor ) * Q + lambda_factor * eps_Q
-    
-    return Q_init
 
